@@ -1,169 +1,53 @@
-const { validationResult } = require('express-validator');
+const express = require('express');
+const { body } = require('express-validator');
 
-const Product = require('../models/product');
-const { fetchAllProducts, forwardError, deleteFile } = require('../utils');
+const adminController = require('../controllers/admin');
+const isAuth = require('../middleware/is-auth');
 
-const renderProductForm = (
-  res,
-  status = 200,
-  product = {},
-  errorMessage = null,
-  validationErrors = [],
-  title = 'Add Product',
-  path = '/admin/add-product',
-  editing = false
-) => {
-  return res.status(status).render('admin/edit-product', {
-    title,
-    path,
-    editing,
-    product,
-    errorMessage,
-    validationErrors
-  });
-};
+const router = express.Router();
 
-const renderProductFormError = (
-  req,
-  res,
-  errorMessage,
-  validationErrors = []) => {
-  return renderProductForm(
-    res,
-    422,
-    {
-      title: req.body.title,
-      price: +req.body.price,
-      description: req.body.description
-    },
-    errorMessage,
-    validationErrors
-  );
-};
+const getValidityHandlers = () => {
+  return [
+    body('title', 'Title should have at least 3 characters.')
+      .isString()
+      .isLength({ min: 3 })
+      .trim(),
+    body('price', 'The Price should be a floating number.')
+      .isFloat(),
+    body('description', 'The description should be at least 3 characters' +
+      ' and 400 at maximum.')
+      .isString()
+      .isLength({ min: 5, max: 400 })
+      .trim()
+  ];
+}
 
-const renderEditProductForm = (
-  res,
-  product,
-  status = 200,
-  errorMessage = null,
-  validationErrors = []
-) => {
-  return renderProductForm(
-    res,
-    status,
-    product,
-    errorMessage,
-    validationErrors,
-    'Edit Product',
-    '/admin/edit-product',
-    true
-  );
-};
+// GET /admin/add-product
+router.get('/add-product', isAuth, adminController.getAddProduct);
 
-exports.getAddProduct = (req, res, next) => {
-  renderProductForm(res);
-};
+// POST /admin/add-product
+router.post(
+  '/add-product',
+  getValidityHandlers(),
+  isAuth,
+  adminController.postAddProduct
+);
 
-exports.postAddProduct = (req, res, next) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return renderProductFormError(
-      req,
-      res,
-      errors.array()[0].msg,
-      errors.array()
-    );
-  }
+// GET /admin/products
+router.get('/products', isAuth, adminController.getProducts);
 
-  if (!req.file) {
-    return renderProductFormError(req, res, 'Attached file is not an image.');
-  }
+// GET /admin/edit-product/id
+router.get('/edit-product/:productId', isAuth, adminController.getEditProduct);
 
-  const product = new Product({
-    title: req.body.title,
-    price: +req.body.price,
-    imageUrl: req.file.path,
-    description: req.body.description,
-    userId: req.user
-  });
-  product
-    .save()
-    .then(() => res.redirect('/products'))
-    .catch(err => forwardError(err, next));
-};
+// POST /admin/edit-product
+router.post(
+  '/edit-product',
+  getValidityHandlers(),
+  isAuth,
+  adminController.postEditProduct
+);
 
-exports.getProducts = (req, res, next) => {
-  fetchAllProducts(
-    'admin/products',
-    'Admin Products',
-    '/admin/products',
-    req,
-    res,
-    next,
-    { userId: req.user._id }
-  );
-};
+// POST /admin/delete-product
+router.post('/delete-product', isAuth, adminController.postDeleteProduct);
 
-exports.getEditProduct = (req, res, next) => {
-  const editMode = req.query.edit;
-  if (!editMode) {
-    return res.redirect('/admin/products');
-  }
-  Product.findById(req.params.productId)
-    .then((product) => {
-      if (!product) {
-        return res.redirect('/admin/products');
-      }
-      renderEditProductForm(res, product);
-    })
-    .catch(err => forwardError(err, next));
-};
-
-exports.postEditProduct = (req, res, next) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return renderEditProductForm(
-      res,
-      {
-        title: req.body.title,
-        price: +req.body.price,
-        description: req.body.description,
-        _id: req.body.id
-      },
-      422,
-      errors.array()[0].msg,
-      errors.array()
-    );
-  }
-
-  Product.findById(req.body.id)
-    .then((product) => {
-      // Protect the edit by another user
-      if (product.userId.toString() !== req.user._id.toString()) {
-        return res.redirect('/');
-      }
-      product.title = req.body.title;
-      product.price = +req.body.price;
-      product.description = req.body.description;
-      if (req.file) {
-        deleteFile(product.imageUrl);
-        product.imageUrl = req.file.path;
-      }
-      return product.save()
-        .then(() => res.redirect('/admin/products'));
-    })
-    .catch(err => forwardError(err, next));
-};
-
-exports.postDeleteProduct = (req, res, next) => {
-  Product.findById(req.body.id)
-    .then(product => {
-      if (!product) {
-        return forwardError('No Product for id = ' + req.body.id);
-      }
-      deleteFile(product.imageUrl);
-      return Product.deleteOne({ _id: req.body.id, userId: req.user._id });
-    })
-    .then(() => res.redirect('/admin/products'))
-    .catch(err => forwardError(err, next));
-};
+module.exports = router;
